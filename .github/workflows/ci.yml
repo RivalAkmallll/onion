@@ -1,0 +1,42 @@
+name: Onion CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    name: Build and Test Onion
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check Rust version
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Check compiler
+        working-directory: onion-compiler
+        run: cargo check --all-targets
+
+      - name: Build compiler
+        working-directory: onion-compiler
+        run: cargo build --bins
+
+      - name: Run Rust tests
+        working-directory: onion-compiler
+        run: cargo test
+
+      - name: Run Onion smoke test
+        run: ./tests/smoke.ps1
