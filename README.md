@@ -1,43 +1,42 @@
- <div align="center">
+<div align="center">
 
-<img src="./onion-compiler/vscode-onion/icons/onion.png" alt="Onion Programming Language" width="165">
+<img src="./onion-compiler/vscode-onion/icons/onion.png" alt="Onion Programming Language" width="150">
 
-# Onion
+# The Onion Programming Language
 
-**A new language. A familiar feeling.**
+**A Rust-inspired programming language, built from the ground up.**
 
-A Rust-inspired programming language built from scratch, one layer at a time.
-
-[![Version](https://img.shields.io/badge/version-0.1.0-8c42ad?style=flat-square)](https://github.com/RivalAkmals/onion-lang)
-[![Rust](https://img.shields.io/badge/built_with-Rust-f46623?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-experimental-e5a339?style=flat-square)](https://github.com/RivalAkmals/onion-lang)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square&logo=windows&logoColor=white)](https://github.com/RivalAkmals/onion-lang)
-
-[Getting Started](#getting-started) · [Language](#the-language) · [Editor Support](#editor-support) · [Roadmap](#roadmap)
-
-*Official website and public downloads are on the roadmap.*
+[GitHub](https://github.com/RivalAkmals/onion-lang) | [Getting Started](#getting-started) | [Documentation](#documentation) | [Contributing](#contributing)
 
 </div>
 
 ---
 
-## Meet Onion.
+This is the main source code repository for **Onion**, an experimental programming language implemented in Rust.
 
-Onion is an experimental programming language written in Rust.
+The repository contains the Onion compiler, language server, Visual Studio Code integration, and example programs.
 
-It takes inspiration from Rust's syntax and programming style while exploring its own direction. The idea is to build something approachable without giving up the control and flexibility that make systems programming interesting.
+Onion takes inspiration from Rust's syntax and development experience while being developed as an independent language project.
 
-Onion isn't trying to replace Rust, C++, or anything else.
+The language and its tooling are under active development. The compiler is not yet considered stable or production-ready.
 
-It's a language being built because building a language is interesting — and because there are plenty of ideas worth exploring.
+## Why Onion?
 
-The compiler, language server, and editor integration are developed together, rather than treating tooling as an afterthought.
+Onion is being developed around three main goals:
 
-**Still early. Already real.**
+- **Familiarity:** A Rust-inspired syntax with familiar functions, variables, expressions, and control-flow constructs.
 
-## The language
+- **Developer experience:** Compiler diagnostics, editor integration, syntax highlighting, and language-server support developed alongside the compiler.
 
-If you've written Rust before, parts of Onion will look familiar.
+- **Extensibility:** A compiler architecture that can evolve to support additional language features, tooling, and platforms.
+
+Onion is an independent project. It is not a fork of the Rust compiler and does not currently offer all of Rust's language features or guarantees.
+
+## Getting Started
+
+An Onion program is stored in a `.onion` file. The shorter `.oni` extension is also supported.
+
+A minimal program looks like this:
 
 ```rust
 fn main() {
@@ -45,58 +44,31 @@ fn main() {
 }
 ```
 
-Onion uses `.onion` files, with `.oni` supported as a shorter alternative.
+Save the program as `main.onion`.
 
-Here's a larger example showing the kind of syntax the project is exploring:
+Once Onion is installed and available on your system's PATH, run:
 
-```rust
-fn main() {
-    let mut counter = 0;
-
-    loop {
-        counter += 1;
-
-        if counter % 2 == 0 {
-            continue;
-        }
-
-        println!("counter = {}", counter);
-
-        if counter >= 9 {
-            break;
-        }
-    }
-
-    println!("Done!");
-}
+```powershell
+onion run main.onion
 ```
 
-The language is still evolving. Some features may change or behave differently between releases.
+Output:
 
-## What's inside?
+```text
+Hello, Onion!
+```
 
-| Component | Description |
-|---|---|
-| **Onion Compiler** | The language's compiler, implemented in Rust |
-| **Onion LSP** | Language Server Protocol support for editor integration |
-| **VS Code Extension** | Syntax highlighting, completions, and diagnostics |
-| **Error Diagnostics** | Problems reported directly inside the editor |
-| **Onion CLI** | Command-line interface for working with Onion programs |
-| **Custom File Support** | `.onion` and `.oni` source files |
+For now, Onion is primarily developed and tested on Windows.
 
-The goal is to make Onion feel like a complete programming environment, from writing your first line of code to building and running a project.
+## Installing from Source
 
-## Getting started
+Onion is currently distributed as a source project while the public release and installation process is being developed.
 
-Onion is currently available as a source project while the public distribution process is being prepared.
-
-### Prerequisites
-
-For development, you'll need:
+### Requirements
 
 - [Rust and Cargo](https://rustup.rs/)
-- [Visual Studio Code](https://code.visualstudio.com/)
-- [Node.js](https://nodejs.org/) for the editor extension
+- [Git](https://git-scm.com/)
+- [Node.js](https://nodejs.org/) (for building the VS Code extension)
 - A Windows development environment
 
 ### Clone the repository
@@ -113,181 +85,176 @@ cd onion-compiler
 cargo build --release --bins
 ```
 
-After a successful build, the compiler and language server binaries can be found in:
+The resulting binaries are located in:
 
 ```text
 target/release/onion.exe
 target/release/onion-lsp.exe
 ```
 
-### Build the VS Code extension
+The `onion` executable provides the compiler's command-line interface. The `onion-lsp` executable provides Language Server Protocol integration.
+
+To use the compiler from another directory, add the binary directory to your PATH.
+
+## Editor Support
+
+Onion includes a Visual Studio Code extension located in [`onion-compiler/vscode-onion`](./onion-compiler/vscode-onion).
+
+The extension provides:
+
+- Syntax highlighting for `.onion` and `.oni` files
+- Language identification and file icons
+- Compiler diagnostics in the editor
+- Code completion
+- Language Server Protocol integration
+
+### Building the extension
+
+From the repository root:
 
 ```powershell
-cd vscode-onion
+cd onion-compiler/vscode-onion
 npm install
 npx @vscode/vsce package
 ```
 
-Install the generated `.vsix` through Visual Studio Code's **Extensions: Install from VSIX** command.
+Install the generated `.vsix` file through Visual Studio Code using the **Extensions: Install from VSIX** command.
 
-Make sure `onion-lsp.exe` is available on your PATH or configured through the `onion.serverPath` setting.
+The extension requires the Onion language server. Its location can be configured through the `onion.serverPath` setting or resolved through your system's PATH.
 
-### Write your first program
+## Repository Structure
 
-Create `main.onion`:
-
-```rust
-fn main() {
-    println!("Hello from Onion!");
-}
-```
-
-Run it:
-
-```powershell
-onion run main.onion
-```
-
-Expected output:
-
-```text
-Hello from Onion!
-```
-
-**Note:** The current Windows tooling is experimental. These steps describe the development workflow, not a finalized public installer.
-
-## Editor support
-
-Onion has its own Visual Studio Code extension.
-
-The extension currently targets:
-
-- Syntax highlighting for Onion files
-- Automatic recognition of `.oni` and `.onion`
-- Error reporting and diagnostics
-- Code completions
-- Language server integration
-- Custom Onion file icons
-
-The language server is built in Rust, allowing the compiler's understanding of Onion to be reused in the editor.
-
-Editor support will continue to improve alongside the language.
-
-## Project structure
+The source tree currently contains the following main components:
 
 ```text
 onion/
-├── onion-compiler/
-│   ├── src/
-│   ├── vscode-onion/
-│   │   ├── icons/
-│   │   │   └── onion.png
-│   │   ├── syntaxes/
-│   │   ├── extension.js
-│   │   └── package.json
-│   ├── Cargo.toml
-│   └── Cargo.lock
+├── onion-compiler/       # Compiler and language server
+│   ├── src/              # Rust source code
+│   ├── vscode-onion/     # Visual Studio Code extension
+│   ├── Cargo.toml        # Rust package manifest
+│   └── Cargo.lock        # Dependency lockfile
 │
-├── hello-onion/
-│   └── main.oni
-│
-├── install.ps1
+├── hello-onion/          # Example Onion programs
+├── install.ps1           # Windows installation script
 └── README.md
 ```
 
-The repository contains the compiler implementation, editor tooling, and example programs.
+The project structure will grow as the language implementation, tests, documentation, standard library, and build tooling expand.
 
-## Roadmap
+## Compiler Development
 
-Onion is being developed in stages. The current focus is getting the language and its tools into a reliable, usable state.
+The Onion compiler is written in Rust.
 
-**Language and compiler**
+Development currently focuses on language parsing, execution and code generation, compiler errors, and editor tooling.
+
+To build the compiler in development mode:
+
+```powershell
+cd onion-compiler
+cargo build
+```
+
+To check the Rust source code:
+
+```powershell
+cargo check
+```
+
+The compiler and language server are developed together to support both command-line compilation and interactive editor features.
+
+## Documentation
+
+Language documentation is still being prepared.
+
+Planned documentation includes:
+
+- Language syntax and basic concepts
+- Variables, types, and expressions
+- Functions and control flow
+- Compiler usage and command-line options
+- Standard library reference
+- Editor configuration
+- Compiler internals and contributor guides
+
+An official documentation website is planned as part of the Onion project.
+
+Until then, the repository and example source files serve as the primary development references.
+
+## Project Status
+
+Onion is currently in **early development**.
+
+The compiler, language syntax, command-line interface, and tooling are subject to change.
+
+The current development priorities are:
+
 - [x] Initial compiler implementation
-- [x] Rust-inspired function syntax
+- [x] Basic Rust-inspired syntax
 - [x] Command-line compiler
-- [ ] Expand the type system
-- [ ] Improve compiler diagnostics
-- [ ] Add more language features
-- [ ] Improve code generation and optimization
-- [ ] Standard library development
-
-**Developer experience**
-- [x] VS Code language extension
-- [x] Syntax highlighting
 - [x] Language server foundation
-- [x] Code completion foundation
-- [x] Custom file icon
-- [ ] More intelligent autocomplete
-- [ ] Go to definition
-- [ ] Rename symbol support
-- [ ] Code formatting
-- [ ] Debugger integration
-
-**Distribution and ecosystem**
-- [ ] Portable Windows installer
+- [x] Visual Studio Code extension
+- [x] Syntax highlighting and diagnostics
+- [ ] Expanded type system
+- [ ] Additional language features
+- [ ] Improved compiler diagnostics
+- [ ] Standard library development
+- [ ] Automated compiler test suite
+- [ ] Code formatting and editor refactoring
 - [ ] Public binary releases
-- [ ] VS Code Marketplace publication
-- [ ] Linux support
-- [ ] macOS support
-- [ ] Package management
-- [ ] Official documentation
-- [ ] Official Onion website
-- [ ] Online playground
+- [ ] Cross-platform support
+- [ ] Official installation tool
+- [ ] Official language documentation
+- [ ] Onion website
 
-These are development goals, not guaranteed release commitments.
+This roadmap is subject to change as the project develops.
 
-## An official home for Onion
+## Website
 
-The repository is just the beginning.
+An official Onion website is planned.
 
-An official website is planned to bring everything together: downloads, documentation, language examples, release notes, and a place for people to follow development.
+It will provide language documentation, installation instructions, compiler downloads, release information, and resources for developers.
 
-The long-term idea is a language website with the same kind of developer-first experience found in established language ecosystems.
-
-No installation guides scattered across random pages. No guessing which binary to download.
-
-Just a straightforward way to get Onion, learn it, and start building.
+The website will serve as the main entry point for users who want to install and learn Onion without building the compiler from source.
 
 **Website: Coming soon.**
 
-Until then, GitHub is the project's home.
+## Getting Help
+
+If you encounter a compiler error, unexpected behavior, or an issue with the Visual Studio Code extension, please report it through [GitHub Issues](https://github.com/RivalAkmals/onion-lang/issues).
+
+When reporting a compiler issue, include the Onion source code needed to reproduce it, the command you ran, and the resulting error message.
 
 ## Contributing
 
-Onion is an independent project in early development.
+Contributions to Onion are welcome.
 
-Ideas, bug reports, and contributions are welcome.
+There are several areas where contributors can help, including compiler development, language tooling, testing, documentation, and platform support.
 
-If you'd like to contribute, open an issue to discuss a feature or submit a pull request with your changes.
+Before making significant changes, please open an issue to discuss the proposed implementation.
 
-As the language grows, contribution guidelines and development documentation will be expanded.
+If you would like to contribute:
 
-## Project status
+1. Fork the repository.
+2. Create a branch for your changes.
+3. Make and test your changes.
+4. Submit a pull request.
 
-**Experimental — v0.1.0**
-
-Onion is not production-ready.
-
-The language specification, compiler behavior, supported features, and tooling are subject to change. Breaking changes should be expected during early development.
-
-If you run into a problem, feel free to open an issue.
-
-[Report an issue](https://github.com/RivalAkmals/onion-lang/issues) · [View source](https://github.com/RivalAkmals/onion-lang)
+Contributor documentation will be expanded as the project matures.
 
 ## License
 
-MIT License. See the `LICENSE` file for details.
+Onion is intended to be distributed under the terms of the MIT License.
+
+See the repository's `LICENSE` file once included.
 
 ---
 
 <div align="center">
 
-<img src="./onion-compiler/vscode-onion/icons/onion.png" alt="Onion" width="65">
-
-**Onion**
+**Onion Programming Language**
 
 *Built layer by layer.*
 
-Created by [Rival Akmal](https://github.com/RivalAkmals)
+[Source Code](https://github.com/RivalAkmals/onion-lang) · [Issues](https://github.com/RivalAkmals/onion-lang/issues)
 
 </div>
