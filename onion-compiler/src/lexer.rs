@@ -73,6 +73,8 @@ pub enum Token {
     Percent,
     #[token("&&")]
     AndAnd,
+    #[token("&")]
+    Ampersand,
     #[token("||")]
     OrOr,
     #[token("+=")]
@@ -132,6 +134,7 @@ impl fmt::Display for Token {
             Token::Slash => "/",
             Token::Percent => "%",
             Token::AndAnd => "&&",
+            Token::Ampersand => "&",
             Token::OrOr => "||",
             Token::PlusEq => "+=",
             Token::MinusEq => "-=",
@@ -251,6 +254,21 @@ mod tests {
                 Token::PlusEq,
                 Token::AndAnd,
                 Token::OrOr,
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_borrow_operators() {
+        assert_eq!(
+            kinds("&value && &mut value"),
+            vec![
+                Token::Ampersand,
+                Token::Ident("value".into()),
+                Token::AndAnd,
+                Token::Ampersand,
+                Token::Mut,
+                Token::Ident("value".into()),
             ]
         );
     }

@@ -402,11 +402,22 @@ impl Parser {
         let op = match self.peek() {
             Some(Token::Minus) => UnOp::Neg,
             Some(Token::Bang) => UnOp::Not,
+            Some(Token::Star) => UnOp::Deref,
+            Some(Token::Ampersand) => {
+                if matches!(self.tokens.get(self.pos + 1), Some((Token::Mut, _))) {
+                    UnOp::BorrowMut
+                } else {
+                    UnOp::Borrow
+                }
+            }
             _ => return self.parse_primary(),
         };
 
         let start = self.current_span();
         self.pos += 1;
+        if op == UnOp::BorrowMut {
+            self.pos += 1; // consume `mut` after `&`
+        }
         let operand = self.parse_unary()?;
         let span = start.start..operand.span.end;
 
@@ -568,5 +579,48 @@ mod tests {
     #[test]
     fn unknown_type_is_error() {
         assert!(parse_src("fn main() { let x: u8 = 1 }").is_err());
+    }
+
+    #[test]
+    fn parse_immutable_reference_syntax() {
+        let p = parse_src(r#"fn main() { let message = "hello" let view = &message }"#).unwrap();
+        match &p.functions[0].body.stmts[1] {
+            Stmt::Let { init, .. } => assert!(matches!(
+                &init.kind,
+                ExprKind::Unary { op: UnOp::Borrow, operand }
+                    if matches!(&operand.kind, ExprKind::Var(n) if n == "message")
+            )),
+            _ => panic!("expected let"),
+        }
+    }
+
+    #[test]
+    fn parse_mutable_reference_syntax() {
+        let p = parse_src("fn main() { let mut score = 1 let view = &mut score }").unwrap();
+        match &p.functions[0].body.stmts[1] {
+            Stmt::Let { init, .. } => assert!(matches!(
+                &init.kind,
+                ExprKind::Unary {
+                    op: UnOp::BorrowMut,
+                    ..
+                }
+            )),
+            _ => panic!("expected let"),
+        }
+    }
+
+    #[test]
+    fn parse_deref_expression_syntax() {
+        let p = parse_src("fn main() { let value = 1 let view = *value }").unwrap();
+        match &p.functions[0].body.stmts[1] {
+            Stmt::Let { init, .. } => assert!(matches!(
+                &init.kind,
+                ExprKind::Unary {
+                    op: UnOp::Deref,
+                    ..
+                }
+            )),
+            _ => panic!("expected let"),
+        }
     }
 }

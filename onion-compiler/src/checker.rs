@@ -348,6 +348,19 @@ impl Checker {
             },
 
             ExprKind::Unary { op, operand } => {
+                // Parsing references is supported in Phase 16.4, but accepting a
+                // reference before ownership/lifetimes are implemented would be unsafe.
+                if matches!(op, UnOp::Borrow | UnOp::BorrowMut | UnOp::Deref) {
+                    self.check_expr(operand);
+                    self.report(
+                        OnionError::new(
+                            format!("reference operator `{op}` is not implemented yet"),
+                            expr.span.clone(),
+                        )
+                        .with_help("Phase 16.4 recognizes reference syntax; borrowing, dereferencing, and lifetime checking are coming next"),
+                    );
+                    return None;
+                }
                 let ty = self.check_expr(operand)?;
                 match (*op, ty) {
                     (UnOp::Neg, Type::I32) | (UnOp::Neg, Type::F64) => Some(ty),

@@ -91,6 +91,9 @@ impl fmt::Display for BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    Borrow,
+    BorrowMut,
+    Deref,
 }
 
 impl fmt::Display for UnOp {
@@ -98,6 +101,9 @@ impl fmt::Display for UnOp {
         f.write_str(match self {
             UnOp::Neg => "-",
             UnOp::Not => "!",
+            UnOp::Borrow => "&",
+            UnOp::BorrowMut => "&mut ",
+            UnOp::Deref => "*",
         })
     }
 }
