@@ -1,0 +1,8 @@
+[package]
+name = "onion-ui-lab"
+version = "0.1.0"
+edition = "2021"
+
+# Rust-hosted Dioxus prototype — NOT compiled from Onion .onion source.
+[dependencies]
+dioxus = { version = "0.7", features = ["desktop"] }
