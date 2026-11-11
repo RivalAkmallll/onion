@@ -9,6 +9,8 @@ struct VarInfo {
     /// This stops one mistake from causing a cascade of follow-up errors.
     ty: Option<Type>,
     mutable: bool,
+    /// Set when ownership of a String has been transferred.
+    moved: bool,
 }
 
 struct Checker {
@@ -92,6 +94,42 @@ impl Checker {
             .find_map(|scope| scope.get(name).copied())
     }
 
+    fn update_binding(&mut self, name: &str, f: impl FnOnce(&mut VarInfo)) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(name) {
+                f(info);
+                return;
+            }
+        }
+    }
+
+    // Initial ownership model: only a bare String variable on the right
+    // side of `let` or `=` is moved. Numbers and booleans remain Copy.
+    // Compound expressions are not ownership transfers yet.
+    fn consume_string_binding(&mut self, value: &Expr) {
+        if let ExprKind::Var(name) = &value.kind {
+            if let Some(info) = self.lookup(name) {
+                if info.ty == Some(Type::Str) && !info.moved {
+                    self.update_binding(name, |v| v.moved = true);
+                }
+            }
+        }
+    }
+
+    fn merge_moved_states(
+        &mut self,
+        first: &[HashMap<String, VarInfo>],
+        second: &[HashMap<String, VarInfo>],
+    ) {
+        for (index, scope) in self.scopes.iter_mut().enumerate() {
+            for (name, info) in scope.iter_mut() {
+                let a = first[index].get(name).map(|v| v.moved).unwrap_or(false);
+                let b = second[index].get(name).map(|v| v.moved).unwrap_or(false);
+                info.moved = a || b;
+            }
+        }
+    }
+
     // ---------- structure ----------
 
     fn check_program(&mut self, program: &Program) {
@@ -147,11 +185,15 @@ impl Checker {
                     (None, inferred) => inferred,
                 };
 
+                if init_ty.is_some() && var_ty == init_ty {
+                    self.consume_string_binding(init);
+                }
                 self.declare(
                     name,
                     VarInfo {
                         ty: var_ty,
                         mutable: *mutable,
+                        moved: false,
                     },
                 );
             }
@@ -183,6 +225,15 @@ impl Checker {
                                 self.report(mismatch(expected, found, value.span.clone()));
                             }
                         }
+                        if info.mutable && info.ty.is_some() && info.ty == value_ty {
+                            // Self-assignment is not treated as a move.
+                            let from_self =
+                                matches!(&value.kind, ExprKind::Var(src) if src == name);
+                            if !from_self {
+                                self.consume_string_binding(value);
+                            }
+                            self.update_binding(name, |v| v.moved = false);
+                        }
                     }
                 }
             }
@@ -205,15 +256,28 @@ impl Checker {
                         ));
                     }
                 }
+                let before = self.scopes.clone();
                 self.check_block(then_block);
+                let after_then = self.scopes.clone();
+                self.scopes = before.clone();
                 if let Some(block) = else_block {
                     self.check_block(block);
                 }
+                let after_else = self.scopes.clone();
+                self.scopes = before;
+                self.merge_moved_states(&after_then, &after_else);
             }
 
             Stmt::Loop { body } => {
                 self.loop_depth += 1;
+                let before = self.scopes.clone();
                 self.check_block(body);
+                let after_once = self.scopes.clone();
+                // Check another iteration to catch repeated moves of outer bindings.
+                self.check_block(body);
+                let after_twice = self.scopes.clone();
+                self.scopes = before;
+                self.merge_moved_states(&after_once, &after_twice);
                 self.loop_depth -= 1;
             }
 
@@ -261,6 +325,15 @@ impl Checker {
             ExprKind::Str(_) => Some(Type::Str),
 
             ExprKind::Var(name) => match self.lookup(name) {
+                Some(info) if info.moved => {
+                    self.report(
+                        OnionError::new(format!("use of moved value `{name}`"), expr.span.clone())
+                            .with_help(format!(
+                            "`{name}` was moved into another binding; use the new binding instead"
+                        )),
+                    );
+                    None
+                }
                 Some(info) => info.ty,
                 None => {
                     self.report(OnionError::new(
@@ -387,5 +460,49 @@ mod tests {
     fn inner_variable_does_not_leak() {
         let src = "fn main() { if true { let y = 1 } println!(\"{}\", y) }";
         assert!(check_src(src).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    use crate::{lexer::lex, parser::parse};
+
+    fn verify(src: &str) -> Result<(), Vec<OnionError>> {
+        let program = parse(lex(src).unwrap(), src.len()).unwrap();
+        check(&program)
+    }
+
+    #[test]
+    fn string_move_rejects_old_binding() {
+        let errors =
+            verify(r#"fn main() { let a = "hello" let b = a println!("{}", a) }"#).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("moved value `a`")));
+    }
+
+    #[test]
+    fn string_move_allows_new_binding() {
+        assert!(verify(r#"fn main() { let a = "hello" let b = a println!("{}", b) }"#).is_ok());
+    }
+
+    #[test]
+    fn integer_is_copyable() {
+        assert!(verify(r#"fn main() { let a = 42 let b = a println!("{} {}", a, b) }"#).is_ok());
+    }
+
+    #[test]
+    fn conditional_move_invalidates_binding() {
+        let errors =
+            verify(r#"fn main() { let a = "hello" if true { let b = a } println!("{}", a) }"#)
+                .unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("moved value `a`")));
+    }
+
+    #[test]
+    fn mutable_reassignment_restores_moved_binding() {
+        assert!(verify(
+            r#"fn main() { let mut a = "hello" let b = a a = "new" println!("{}", a) }"#
+        )
+        .is_ok());
     }
 }

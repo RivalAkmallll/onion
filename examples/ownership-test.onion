@@ -1,0 +1,7 @@
+
+fn main() {
+    let message = "Hello, Onion!";
+    let moved = message;
+
+    println!("{}", moved);
+}
