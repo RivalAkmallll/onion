@@ -1,0 +1,61 @@
+{
+    "name":  "onion-lang",
+    "displayName":  "Onion",
+    "description":  "Onion language support: syntax colors, error squiggles, completion",
+    "version":  "0.1.0",
+    "publisher":  "onion-lang",
+    "license":  "MIT",
+    "engines":  {
+                    "vscode":  "^1.80.0"
+                },
+    "categories":  [
+                       "Programming Languages"
+                   ],
+    "activationEvents":  [
+                             "onLanguage:onion"
+                         ],
+    "main":  "./extension.js",
+    "contributes":  {
+                        "languages":  [
+                                          {
+                                              "id":  "onion",
+                                              "aliases":  [
+                                                              "Onion",
+                                                              "onion"
+                                                          ],
+                                              "configuration":  "./language-configuration.json",
+                                              "extensions":  [
+                                                                 ".oni",
+                                                                 ".onion"
+                                                             ],
+                                              "icon":  {
+                                                           "light":  "./icons/onion.png",
+                                                           "dark":  "./icons/onion.png"
+                                                       }
+                                          }
+                                      ],
+                        "grammars":  [
+                                         {
+                                             "language":  "onion",
+                                             "scopeName":  "source.onion",
+                                             "path":  "./syntaxes/onion.tmLanguage.json"
+                                         }
+                                     ],
+                        "configuration":  {
+                                              "title":  "Onion",
+                                              "properties":  {
+                                                                 "onion.serverPath":  {
+                                                                                          "type":  "string",
+                                                                                          "default":  "",
+                                                                                          "description":  "Full path to onion-lsp. Empty = look for `onion-lsp` on PATH."
+                                                                                      }
+                                                             }
+                                          }
+                    },
+    "dependencies":  {
+                         "vscode-languageclient":  "^9.0.1"
+                     },
+    "devDependencies":  {
+                            "@vscode/vsce":  "^3.0.0"
+                        }
+}

@@ -1,0 +1,27 @@
+﻿// Phase 2 demo
+fn main() {
+    let name = "Onion"
+    let mut counter: i32 = 0
+    let pi = 3.14159
+    let radius = 2.0
+
+    println!("Hello from {}!", name)
+    println!("Area: {}", pi * radius * radius)
+
+    loop {
+        counter += 1
+        if counter % 2 == 0 {
+            continue
+        }
+        if counter > 7 {
+            break
+        } else if counter == 5 {
+            println!("five!")
+        } else {
+            println!("counter = {}", counter)
+        }
+    }
+
+    let done = counter > 7 && true
+    println!("done = {}, final counter = {}", done, counter)
+}

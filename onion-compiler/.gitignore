@@ -1,0 +1,28 @@
+
+# Rust
+target/
+**/target/
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+*.exe
+*.pdb
+*.vsix
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Temporary files
+*.bak
+*.backup
+Thumbs.db
+.DS_Store
+
+# Local setup files
+onion_icon_setup/

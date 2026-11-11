@@ -1,0 +1,25 @@
+[package]
+name = "onion-compiler"
+version = "0.1.0"
+edition = "2021"
+description = "Compiler & toolchain for the Onion programming language (.oni)"
+
+[[bin]]
+name = "onion"
+path = "src/main.rs"
+
+[[bin]]
+name = "onion-lsp"
+path = "src/bin/onion-lsp.rs"
+
+[dependencies]
+logos = "0.14"
+clap = { version = "4", features = ["derive"] }
+cranelift-codegen = "0.113"
+cranelift-frontend = "0.113"
+cranelift-module = "0.113"
+cranelift-object = "0.113"
+cranelift-native = "0.113"
+cc = "1"
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
