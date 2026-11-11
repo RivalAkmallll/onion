@@ -3,7 +3,9 @@ use crate::ast::{
 };
 use crate::error::OnionError;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, AbiParam, Block, InstBuilder, MemFlags, Type as ClifType, Value};
+use cranelift_codegen::ir::{
+    types, AbiParam, Block, InstBuilder, MemFlags, Type as ClifType, Value,
+};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
@@ -20,8 +22,7 @@ pub fn compile(program: &Program) -> Result<Vec<u8>, OnionError> {
         .find(|f| f.name == "main")
         .ok_or_else(|| OnionError::without_span("`main` function not found"))?;
 
-    build(main_fn)
-        .map_err(|msg| OnionError::without_span(format!("code generation failed: {msg}")))
+    build(main_fn).map_err(|msg| OnionError::without_span(format!("code generation failed: {msg}")))
 }
 
 fn clif_type(ty: Type) -> ClifType {

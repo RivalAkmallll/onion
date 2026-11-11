@@ -551,13 +551,7 @@ mod tests {
             Stmt::Let { init, .. } => match &init.kind {
                 ExprKind::Binary { op, rhs, .. } => {
                     assert_eq!(*op, BinOp::Add);
-                    assert!(matches!(
-                        rhs.kind,
-                        ExprKind::Binary {
-                            op: BinOp::Mul,
-                            ..
-                        }
-                    ));
+                    assert!(matches!(rhs.kind, ExprKind::Binary { op: BinOp::Mul, .. }));
                 }
                 _ => panic!("expected a binary expression"),
             },
@@ -575,4 +569,4 @@ mod tests {
     fn unknown_type_is_error() {
         assert!(parse_src("fn main() { let x: u8 = 1 }").is_err());
     }
-}   
+}

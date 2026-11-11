@@ -1,6 +1,6 @@
+use onion_compiler::analyze;
 use onion_compiler::error::OnionError;
 use onion_compiler::lexer::{lex, Token};
-use onion_compiler::analyze;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;

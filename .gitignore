@@ -1,2 +1,30 @@
 
+# Rust build outputs
+target/
+**/target/
+
+# Dioxus build outputs
+experiments/target/
+experiments/**/target/
+
+# Compiler generated files
+*.rlib
+*.rmeta
+*.pdb
+*.obj
+
+# Node.js
+node_modules/
+**/node_modules/
+
+# Release artifacts
+dist/
+*.vsix
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+# Local setup
 onion_icon_setup/

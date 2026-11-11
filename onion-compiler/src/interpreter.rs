@@ -81,7 +81,10 @@ impl Interpreter {
             .find_map(|scope| scope.get(name))
             .cloned()
             .ok_or_else(|| {
-                OnionError::new(format!("internal error: undefined variable `{name}`"), span.clone())
+                OnionError::new(
+                    format!("internal error: undefined variable `{name}`"),
+                    span.clone(),
+                )
             })
     }
 
@@ -178,10 +181,11 @@ impl Interpreter {
             ExprKind::Unary { op, operand } => {
                 let value = self.eval(operand)?;
                 match (*op, value) {
-                    (UnOp::Neg, Value::Int(i)) => i
-                        .checked_neg()
-                        .map(Value::Int)
-                        .ok_or_else(|| OnionError::new("arithmetic overflow in negation", expr.span.clone())),
+                    (UnOp::Neg, Value::Int(i)) => {
+                        i.checked_neg().map(Value::Int).ok_or_else(|| {
+                            OnionError::new("arithmetic overflow in negation", expr.span.clone())
+                        })
+                    }
                     (UnOp::Neg, Value::Float(x)) => Ok(Value::Float(-x)),
                     (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                     _ => Err(internal_error(&expr.span)),
@@ -212,7 +216,9 @@ fn apply_binary(op: BinOp, left: Value, right: Value, span: &Span) -> Result<Val
     match (left, right) {
         (Value::Int(a), Value::Int(b)) => int_op(op, a, b, span),
 
-        (Value::Float(a), Value::Float(b)) => float_op(op, a, b).ok_or_else(|| internal_error(span)),
+        (Value::Float(a), Value::Float(b)) => {
+            float_op(op, a, b).ok_or_else(|| internal_error(span))
+        }
 
         (Value::Bool(a), Value::Bool(b)) => match op {
             BinOp::Equal => Ok(Value::Bool(a == b)),
@@ -233,7 +239,12 @@ fn apply_binary(op: BinOp, left: Value, right: Value, span: &Span) -> Result<Val
 
 /// i32 arithmetic with overflow and division-by-zero detection.
 fn int_op(op: BinOp, a: i32, b: i32, span: &Span) -> Result<Value, OnionError> {
-    let overflow = || OnionError::new(format!("arithmetic overflow in `{a} {op} {b}`"), span.clone());
+    let overflow = || {
+        OnionError::new(
+            format!("arithmetic overflow in `{a} {op} {b}`"),
+            span.clone(),
+        )
+    };
 
     let value = match op {
         BinOp::Add => a.checked_add(b).map(Value::Int).ok_or_else(overflow)?,

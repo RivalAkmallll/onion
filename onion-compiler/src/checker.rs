@@ -200,10 +200,9 @@ impl Checker {
             } => {
                 if let Some(found) = self.check_expr(cond) {
                     if found != Type::Bool {
-                        self.report(
-                            mismatch(Type::Bool, found, cond.span.clone())
-                                .with_help("conditions must be `bool`; Onion has no truthy or falsy values"),
-                        );
+                        self.report(mismatch(Type::Bool, found, cond.span.clone()).with_help(
+                            "conditions must be `bool`; Onion has no truthy or falsy values",
+                        ));
                     }
                 }
                 self.check_block(then_block);
@@ -294,7 +293,13 @@ impl Checker {
                 let (l, r) = match (left, right) {
                     (Some(l), Some(r)) => (l, r),
                     // An operand already failed: don't pile on more errors.
-                    _ => return if op.yields_bool() { Some(Type::Bool) } else { None },
+                    _ => {
+                        return if op.yields_bool() {
+                            Some(Type::Bool)
+                        } else {
+                            None
+                        }
+                    }
                 };
 
                 let result = match *op {
