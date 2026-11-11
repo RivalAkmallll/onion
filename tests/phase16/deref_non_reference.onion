@@ -1,0 +1,4 @@
+fn main() {
+    let score = 10
+    println!("{}", *score)
+}

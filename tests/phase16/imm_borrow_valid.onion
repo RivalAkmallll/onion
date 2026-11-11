@@ -1,0 +1,6 @@
+fn main() {
+    let message = "Hello Onion"
+    let view = &message
+    println!("{}", *view)
+    println!("{}", message)
+}

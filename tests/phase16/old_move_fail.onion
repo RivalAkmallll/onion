@@ -1,0 +1,5 @@
+fn main() {
+    let message = "hello"
+    let moved = message
+    println!("{}", message)
+}

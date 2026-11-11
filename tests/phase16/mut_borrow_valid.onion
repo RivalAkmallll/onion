@@ -1,0 +1,6 @@
+fn main() {
+    let mut score = 10
+    let r = &mut score
+    *r = 25
+    println!("{}", score)
+}

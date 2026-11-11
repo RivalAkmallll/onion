@@ -1,0 +1,7 @@
+fn main() {
+    let mut score = 10
+    let first = &mut score
+    let second = &mut score
+    println!("{}", *first)
+    println!("{}", *second)
+}

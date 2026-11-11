@@ -1,0 +1,9 @@
+fn main() {
+    let outside = "outer"
+    let mut view = &outside
+    if true {
+        let inside = "inner"
+        view = &inside
+    }
+    println!("{}", *view)
+}
