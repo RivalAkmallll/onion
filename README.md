@@ -83,7 +83,7 @@ Requirements:
 Clone the repository:
 
 ```powershell
-git clone https://github.com/RivalAkmallll/onion-lang.git
+git clone https://github.com/RivalAkmallll/onion.git
 cd onion-lang
 ```
 
