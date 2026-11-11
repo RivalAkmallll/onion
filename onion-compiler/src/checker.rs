@@ -29,6 +29,9 @@ pub fn check(program: &Program) -> Result<(), Vec<OnionError>> {
     };
     checker.check_program(program);
 
+    let security_findings = crate::security::scan(program);
+    checker.errors.extend(security_findings);
+
     if checker.errors.is_empty() {
         Ok(())
     } else {

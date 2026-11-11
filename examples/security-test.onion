@@ -1,0 +1,6 @@
+
+fn main() {
+    let result = 100 / 0;
+
+    println!("{}", result);
+}

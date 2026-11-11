@@ -8,6 +8,7 @@ pub mod interpreter;
 pub mod lexer;
 pub mod linker;
 pub mod parser;
+pub mod security;
 
 use error::OnionError;
 
