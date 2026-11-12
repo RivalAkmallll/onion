@@ -22,6 +22,7 @@ struct Checker {
     errors: Vec<OnionError>,
     loop_depth: usize,
     next_id: usize,
+    loop_scope_depths: Vec<usize>,
 }
 
 /// Type-checks and scope-checks the whole program.
@@ -32,6 +33,7 @@ pub fn check(program: &Program) -> Result<(), Vec<OnionError>> {
         errors: Vec::new(),
         loop_depth: 0,
         next_id: 0,
+        loop_scope_depths: Vec::new(),
     };
     checker.check_program(program);
 
@@ -75,6 +77,36 @@ fn binary_error(op: BinOp, left: Type, right: Type, span: Span) -> OnionError {
             format!("operator `{op}` cannot be applied to `{left}` values"),
             span,
         )
+    }
+}
+
+fn expr_mentions(expr: &Expr, name: &str) -> bool {
+    match &expr.kind {
+        ExprKind::Var(found) => found == name,
+        ExprKind::Unary { operand, .. } => expr_mentions(operand, name),
+        ExprKind::Binary { lhs, rhs, .. } => expr_mentions(lhs, name) || expr_mentions(rhs, name),
+        _ => false,
+    }
+}
+
+// Control flow is a barrier, never evidence that a reference is dead.
+fn stmt_mentions(stmt: &Stmt, name: &str) -> bool {
+    match stmt {
+        Stmt::Let {
+            name: declared,
+            init,
+            ..
+        } => declared == name || expr_mentions(init, name),
+        Stmt::Assign {
+            name: assigned,
+            value,
+            ..
+        } => assigned == name || expr_mentions(value, name),
+        Stmt::DerefAssign { target, value } => {
+            expr_mentions(target, name) || expr_mentions(value, name)
+        }
+        Stmt::Println { args, .. } => args.iter().any(|arg| expr_mentions(arg, name)),
+        _ => true,
     }
 }
 
@@ -181,6 +213,17 @@ impl Checker {
         if let ExprKind::Var(name) = &value.kind {
             if let Some(info) = self.lookup(name) {
                 if info.ty == Some(Type::Str) && !info.moved {
+                    if self
+                        .loop_scope_depths
+                        .last()
+                        .is_some_and(|depth| info.declared_depth <= *depth)
+                    {
+                        self.report(OnionError::new(
+                            "moving an outer String inside a loop requires control-flow ownership analysis",
+                            value.span.clone(),
+                        ));
+                        return;
+                    }
                     if self.active_references(info.id) {
                         self.report(OnionError::new(
                             format!("cannot move `{name}` while it is borrowed"),
@@ -257,8 +300,45 @@ impl Checker {
 
     fn check_block(&mut self, block: &Block) {
         self.scopes.push(HashMap::new());
-        for stmt in &block.stmts {
+        let straight_line = self.loop_depth == 0
+            && block.stmts.iter().all(|stmt| {
+                matches!(
+                    stmt,
+                    Stmt::Let { .. }
+                        | Stmt::Assign { .. }
+                        | Stmt::DerefAssign { .. }
+                        | Stmt::Println { .. }
+                )
+            });
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            // Only local, non-escaping exclusive references in a straight-line
+            // block qualify. Capture identities before shadowing can replace them.
+            let ending: Vec<(String, usize)> = if straight_line {
+                self.scopes
+                    .last()
+                    .into_iter()
+                    .flat_map(|scope| scope.iter())
+                    .filter(|(name, info)| {
+                        info.ref_mutable
+                            && info.ref_target.is_some()
+                            && stmt_mentions(stmt, name)
+                            && !block.stmts[index + 1..]
+                                .iter()
+                                .any(|later| stmt_mentions(later, name))
+                    })
+                    .map(|(name, info)| (name.clone(), info.id))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             self.check_stmt(stmt);
+            for (name, id) in ending {
+                self.update_binding(&name, |info| {
+                    if info.id == id {
+                        info.ref_target = None;
+                    }
+                });
+            }
         }
         self.scopes.pop();
     }
@@ -290,12 +370,7 @@ impl Checker {
                 if init_ty.is_some() && var_ty == init_ty {
                     self.consume_string_binding(init);
                 }
-                if let Some(existing) = self
-                    .scopes
-                    .last()
-                    .and_then(|scope| scope.get(name))
-                    .copied()
-                {
+                if let Some(existing) = self.lookup(name) {
                     if self.active_references(existing.id) {
                         self.report(OnionError::new(
                             format!("cannot shadow `{name}` while it is borrowed"),
@@ -359,6 +434,17 @@ impl Checker {
                         name_span.clone(),
                     )),
                     Some(info) => {
+                        if info.ty.is_some_and(|ty| ty.dereference().is_some())
+                            && self
+                                .loop_scope_depths
+                                .last()
+                                .is_some_and(|depth| info.declared_depth <= *depth)
+                        {
+                            self.report(OnionError::new(
+                                "reassigning an outer reference inside a loop requires control-flow lifetime analysis",
+                                value.span.clone(),
+                            ));
+                        }
                         if info.ty.is_some_and(Type::is_mut_reference) {
                             self.report(OnionError::new(
                                 "mutable references cannot be rebound yet",
@@ -481,15 +567,26 @@ impl Checker {
 
             Stmt::Loop { body } => {
                 self.loop_depth += 1;
+                self.loop_scope_depths.push(self.scopes.len());
                 let before = self.scopes.clone();
                 self.check_block(body);
                 let after_once = self.scopes.clone();
                 // Check another iteration to catch repeated moves of outer bindings.
                 self.check_block(body);
                 let after_twice = self.scopes.clone();
-                self.scopes = before;
+                self.scopes = before.clone();
                 self.check_reference_merge(&after_once, &after_twice);
                 self.merge_moved_states(&after_once, &after_twice);
+                // An unreachable assignment after an exit must not restore an
+                // outer binding that was already moved on loop entry.
+                for (index, scope) in self.scopes.iter_mut().enumerate() {
+                    for (name, info) in scope {
+                        if let Some(entry) = before.get(index).and_then(|scope| scope.get(name)) {
+                            info.moved |= entry.moved;
+                        }
+                    }
+                }
+                self.loop_scope_depths.pop();
                 self.loop_depth -= 1;
             }
 
@@ -515,6 +612,35 @@ impl Checker {
 
     // ---------- expressions ----------
 
+    fn check_variable(&mut self, name: &str, span: &Span, read: bool) -> Option<Type> {
+        match self.lookup(name) {
+            Some(info) if info.moved => {
+                self.report(
+                    OnionError::new(format!("use of moved value `{name}`"), span.clone())
+                        .with_help(format!(
+                            "`{name}` was moved into another binding; use the new binding instead"
+                        )),
+                );
+                None
+            }
+            Some(info) if read && self.active_mutable_reference(info.id) => {
+                self.report(OnionError::new(
+                    format!("cannot read `{name}` while mutably borrowed"),
+                    span.clone(),
+                ));
+                None
+            }
+            Some(info) => info.ty,
+            None => {
+                self.report(OnionError::new(
+                    format!("cannot find variable `{name}` in this scope"),
+                    span.clone(),
+                ));
+                None
+            }
+        }
+    }
+
     /// Returns the expression's type, or `None` if an error was already reported.
     fn check_expr(&mut self, expr: &Expr) -> Option<Type> {
         match &expr.kind {
@@ -536,25 +662,7 @@ impl Checker {
             ExprKind::Bool(_) => Some(Type::Bool),
             ExprKind::Str(_) => Some(Type::Str),
 
-            ExprKind::Var(name) => match self.lookup(name) {
-                Some(info) if info.moved => {
-                    self.report(
-                        OnionError::new(format!("use of moved value `{name}`"), expr.span.clone())
-                            .with_help(format!(
-                            "`{name}` was moved into another binding; use the new binding instead"
-                        )),
-                    );
-                    None
-                }
-                Some(info) => info.ty,
-                None => {
-                    self.report(OnionError::new(
-                        format!("cannot find variable `{name}` in this scope"),
-                        expr.span.clone(),
-                    ));
-                    None
-                }
-            },
+            ExprKind::Var(name) => self.check_variable(name, &expr.span, true),
 
             ExprKind::Unary { op, operand } => {
                 if *op == UnOp::BorrowMut {
@@ -567,7 +675,7 @@ impl Checker {
                         return None;
                     };
                     let info = self.lookup(name);
-                    let ty = self.check_expr(operand)?;
+                    let ty = self.check_variable(name, &operand.span, false)?;
                     let info = info?;
                     if !info.mutable {
                         self.report(OnionError::new(
@@ -602,7 +710,7 @@ impl Checker {
                         return None;
                     };
                     let info = self.lookup(name);
-                    let ty = self.check_expr(operand)?;
+                    let ty = self.check_variable(name, &operand.span, false)?;
                     if info.and_then(|i| i.ref_target).is_some() || ty.dereference().is_some() {
                         self.report(OnionError::new(
                             "references to references are not supported yet",
