@@ -37,14 +37,12 @@ impl LanguageServer for Backend {
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {
-                // Editor sends the whole file on every change. Simple and safe.
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
                 completion_provider: Some(CompletionOptions::default()),
                 ..Default::default()
             },
-            ..Default::default()
         })
     }
 

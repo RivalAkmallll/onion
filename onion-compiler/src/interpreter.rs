@@ -1,14 +1,18 @@
 use crate::ast::*;
 use crate::error::{OnionError, Span};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
+use std::rc::{Rc, Weak};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum Value {
     Int(i32),
     Float(f64),
     Bool(bool),
     Str(String),
+    Ref(Weak<RefCell<Value>>),
+    MutRef(Weak<RefCell<Value>>),
 }
 
 impl fmt::Display for Value {
@@ -19,6 +23,7 @@ impl fmt::Display for Value {
             Value::Float(v) => write!(f, "{v:?}"),
             Value::Bool(v) => write!(f, "{v}"),
             Value::Str(s) => f.write_str(s),
+            Value::Ref(_) | Value::MutRef(_) => f.write_str("<reference>"),
         }
     }
 }
@@ -31,7 +36,7 @@ enum Flow {
 }
 
 struct Interpreter {
-    scopes: Vec<HashMap<String, Value>>,
+    scopes: Vec<HashMap<String, Rc<RefCell<Value>>>>,
 }
 
 /// Runs the program: finds `fn main()` and executes its body.
@@ -61,14 +66,14 @@ impl Interpreter {
 
     fn declare(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), value);
+            scope.insert(name.to_string(), Rc::new(RefCell::new(value)));
         }
     }
 
     fn assign(&mut self, name: &str, value: Value) {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(slot) = scope.get_mut(name) {
-                *slot = value;
+                *slot.borrow_mut() = value;
                 return;
             }
         }
@@ -79,13 +84,22 @@ impl Interpreter {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .cloned()
+            .map(|cell| cell.borrow().clone())
             .ok_or_else(|| {
                 OnionError::new(
                     format!("internal error: undefined variable `{name}`"),
                     span.clone(),
                 )
             })
+    }
+
+    fn lookup_cell(&self, name: &str, span: &Span) -> Result<Rc<RefCell<Value>>, OnionError> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .cloned()
+            .ok_or_else(|| OnionError::new(format!("undefined variable `{name}`"), span.clone()))
     }
 
     // ---------- statements ----------
@@ -117,6 +131,23 @@ impl Interpreter {
             Stmt::Assign { name, value, .. } => {
                 let value = self.eval(value)?;
                 self.assign(name, value);
+            }
+
+            Stmt::DerefAssign { target, value } => {
+                let reference = self.eval(target)?;
+                let Value::MutRef(weak) = reference else {
+                    return Err(OnionError::new(
+                        "cannot assign through non-mutable reference",
+                        target.span.clone(),
+                    ));
+                };
+                let cell = weak.upgrade().ok_or_else(|| {
+                    OnionError::new("dangling mutable reference", target.span.clone())
+                })?;
+                let updated = self.eval(value)?;
+                *cell.try_borrow_mut().map_err(|_| {
+                    OnionError::new("reference is already borrowed", target.span.clone())
+                })? = updated;
             }
 
             Stmt::Println { parts, args } => {
@@ -179,6 +210,30 @@ impl Interpreter {
             ExprKind::Var(name) => self.lookup(name, &expr.span),
 
             ExprKind::Unary { op, operand } => {
+                if *op == UnOp::BorrowMut {
+                    if let ExprKind::Var(name) = &operand.kind {
+                        let cell = self.lookup_cell(name, &operand.span)?;
+                        return Ok(Value::MutRef(Rc::downgrade(&cell)));
+                    }
+                    return Err(internal_error(&expr.span));
+                }
+                if *op == UnOp::Borrow {
+                    if let ExprKind::Var(name) = &operand.kind {
+                        let cell = self.lookup_cell(name, &operand.span)?;
+                        return Ok(Value::Ref(Rc::downgrade(&cell)));
+                    }
+                    return Err(internal_error(&expr.span));
+                }
+                if *op == UnOp::Deref {
+                    if let Value::Ref(weak) | Value::MutRef(weak) = self.eval(operand)? {
+                        let cell = weak.upgrade().ok_or_else(|| {
+                            OnionError::new("dangling reference", expr.span.clone())
+                        })?;
+                        let value = cell.borrow().clone();
+                        return Ok(value);
+                    }
+                    return Err(internal_error(&expr.span));
+                }
                 let value = self.eval(operand)?;
                 match (*op, value) {
                     (UnOp::Neg, Value::Int(i)) => {

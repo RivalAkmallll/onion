@@ -30,7 +30,10 @@ fn clif_type(ty: Type) -> ClifType {
         Type::I32 => types::I32,
         Type::F64 => types::F64,
         Type::Bool => types::I8,
-        Type::Str => types::I64, // pointer to NUL-terminated bytes
+        Type::Str | Type::RefStr | Type::MutRefStr => types::I64, // pointer to NUL-terminated bytes
+        Type::RefI32 | Type::MutRefI32 => types::I32,
+        Type::RefF64 | Type::MutRefF64 => types::F64,
+        Type::RefBool | Type::MutRefBool => types::I8,
     }
 }
 
@@ -150,6 +153,7 @@ fn build(main_fn: &Function) -> Res<Vec<u8>> {
             be: &mut be,
             b: builder,
             scopes: vec![HashMap::new()],
+            ref_targets: vec![HashMap::new()],
             loops: Vec::new(),
             next_var: 0,
         };
@@ -176,6 +180,7 @@ struct FnGen<'a, 'b> {
     be: &'a mut Backend,
     b: FunctionBuilder<'b>,
     scopes: Vec<HashMap<String, (Variable, Type)>>,
+    ref_targets: Vec<HashMap<String, String>>,
     /// (continue target, break target) for each enclosing loop.
     loops: Vec<(Block, Block)>,
     /// Counter for fresh Cranelift variable ids.
@@ -229,6 +234,13 @@ impl<'a, 'b> FnGen<'a, 'b> {
             .rev()
             .find_map(|scope| scope.get(name).copied())
             .ok_or_else(|| format!("undefined variable `{name}`"))
+    }
+
+    fn reference_target(&self, name: &str) -> Option<&str> {
+        self.ref_targets
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).map(String::as_str))
     }
 
     /// If `cond` is true: print an error, flush, and exit(1). Otherwise continue.
@@ -295,6 +307,7 @@ impl<'a, 'b> FnGen<'a, 'b> {
                 let fmt = self.str_ptr("%s")?;
                 self.call("printf", &[fmt, value])?;
             }
+            _ => return Err("print references by dereferencing them".to_string()),
         }
         Ok(())
     }
@@ -303,10 +316,12 @@ impl<'a, 'b> FnGen<'a, 'b> {
 
     fn block(&mut self, block: &AstBlock) -> Res<()> {
         self.scopes.push(HashMap::new());
+        self.ref_targets.push(HashMap::new());
         for stmt in &block.stmts {
             self.stmt(stmt)?;
         }
         self.scopes.pop();
+        self.ref_targets.pop();
         Ok(())
     }
 
@@ -328,12 +343,46 @@ impl<'a, 'b> FnGen<'a, 'b> {
                 if let Some(scope) = self.scopes.last_mut() {
                     scope.insert(name.clone(), (var, ty));
                 }
+                if let ExprKind::Unary {
+                    op: UnOp::BorrowMut,
+                    operand,
+                } = &init.kind
+                {
+                    if let ExprKind::Var(target_name) = &operand.kind {
+                        if let Some(scope) = self.ref_targets.last_mut() {
+                            scope.insert(name.clone(), target_name.clone());
+                        }
+                    }
+                }
             }
 
             Stmt::Assign { name, value, .. } => {
                 let (val, _) = self.expr(value)?;
                 let (var, _) = self.lookup(name)?;
                 self.b.def_var(var, val);
+            }
+
+            Stmt::DerefAssign { target, value } => {
+                let ExprKind::Var(reference_name) = &target.kind else {
+                    return Err("mutable reference target must be a variable".into());
+                };
+                let (reference_var, reference_ty) = self.lookup(reference_name)?;
+                if !reference_ty.is_mut_reference() {
+                    return Err("cannot write through non-mutable reference".into());
+                }
+                let target_name = self
+                    .reference_target(reference_name)
+                    .ok_or("mutable reference target not found")?
+                    .to_owned();
+                let (source_var, source_ty) = self.lookup(&target_name)?;
+                let (new_value, value_ty) = self.expr(value)?;
+                if source_ty != value_ty {
+                    return Err("mutable reference assignment type mismatch".into());
+                }
+                self.b.def_var(source_var, new_value);
+                // Reference values currently use SSA snapshots, so keep the
+                // reference binding synchronized with the original binding.
+                self.b.def_var(reference_var, new_value);
             }
 
             Stmt::Println { parts, args } => {
@@ -443,11 +492,43 @@ impl<'a, 'b> FnGen<'a, 'b> {
 
             ExprKind::Var(name) => {
                 let (var, ty) = self.lookup(name)?;
-                let value = self.b.use_var(var);
+                let value = if ty.is_mut_reference() {
+                    if let Some(target) = self.reference_target(name).map(str::to_owned) {
+                        let (target_var, _) = self.lookup(&target)?;
+                        self.b.use_var(target_var)
+                    } else {
+                        return Err("mutable reference target is unavailable".into());
+                    }
+                } else {
+                    self.b.use_var(var)
+                };
                 Ok((value, ty))
             }
 
             ExprKind::Unary { op, operand } => {
+                if *op == UnOp::BorrowMut {
+                    let (v, ty) = self.expr(operand)?;
+                    let ref_ty = ty
+                        .mutable_reference_to()
+                        .ok_or("cannot mutably borrow a reference or unsupported type")?;
+                    return Ok((v, ref_ty));
+                }
+                if *op == UnOp::Borrow {
+                    let (v, ty) = self.expr(operand)?;
+                    let ref_ty = ty
+                        .reference_to()
+                        .ok_or("cannot borrow a reference or unsupported type")?;
+                    // Immutable borrow: snapshot is equivalent because checker forbids
+                    // writing/moving the target during the reference lifetime.
+                    return Ok((v, ref_ty));
+                }
+                if *op == UnOp::Deref {
+                    let (v, ty) = self.expr(operand)?;
+                    return Ok((
+                        v,
+                        ty.dereference().ok_or("cannot dereference non-reference")?,
+                    ));
+                }
                 let (v, ty) = self.expr(operand)?;
                 match (*op, ty) {
                     (UnOp::Neg, Type::I32) => {
@@ -493,6 +574,7 @@ impl<'a, 'b> FnGen<'a, 'b> {
                 Ok((value, Type::Bool))
             }
             Type::Str => self.str_binary(op, x, y),
+            _ => Err("reference values cannot be used as binary operands".to_string()),
         }
     }
 

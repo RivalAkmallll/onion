@@ -181,8 +181,24 @@ impl Parser {
                 Ok(Stmt::Continue { span })
             }
             Some(Token::Ident(_)) => self.parse_ident_stmt(),
+            Some(Token::Star) => self.parse_deref_assign(),
             _ => Err(self.unexpected("a statement")),
         }
+    }
+
+    fn parse_deref_assign(&mut self) -> Result<Stmt, OnionError> {
+        let start = self.expect(Token::Star, "`*`")?;
+        let (name, span) = self.expect_ident("reference variable after `*`")?;
+        self.expect(Token::Eq, "`=` after dereference target")?;
+        let value = self.parse_expr()?;
+        self.skip_semicolon();
+        Ok(Stmt::DerefAssign {
+            target: Expr {
+                kind: ExprKind::Var(name),
+                span: start.start..span.end,
+            },
+            value,
+        })
     }
 
     fn parse_let(&mut self) -> Result<Stmt, OnionError> {
@@ -374,10 +390,17 @@ impl Parser {
     fn parse_binary(&mut self, min_prec: u8) -> Result<Expr, OnionError> {
         let mut lhs = self.parse_unary()?;
 
-        loop {
-            let Some((op, prec)) = self.peek().and_then(binary_op) else {
+        while let Some((op, prec)) = self.peek().and_then(binary_op) {
+            // Semicolons are optional in Onion. In `let r = &mut x *r = 25`,
+            // `*r =` starts a new dereference-assignment statement, not a
+            // multiplication expression. An assignment sign cannot follow a
+            // legal multiplication operand, so this lookahead is unambiguous.
+            if matches!(self.peek(), Some(Token::Star))
+                && matches!(self.tokens.get(self.pos + 1), Some((Token::Ident(_), _)))
+                && matches!(self.tokens.get(self.pos + 2), Some((Token::Eq, _)))
+            {
                 break;
-            };
+            }
             if prec < min_prec {
                 break;
             }
@@ -579,6 +602,36 @@ mod tests {
     #[test]
     fn unknown_type_is_error() {
         assert!(parse_src("fn main() { let x: u8 = 1 }").is_err());
+    }
+
+    #[test]
+    fn parse_deref_assignment_after_unterminated_let() {
+        let p = parse_src("fn main() { let mut x = 10 let r = &mut x *r = 25 }").unwrap();
+        assert_eq!(p.functions[0].body.stmts.len(), 3);
+        assert!(matches!(
+            p.functions[0].body.stmts[2],
+            Stmt::DerefAssign { .. }
+        ));
+    }
+
+    #[test]
+    fn multiplication_remains_multiplication() {
+        let p = parse_src("fn main() { let a = 2 let b = 3 let c = a * b }").unwrap();
+        match &p.functions[0].body.stmts[2] {
+            Stmt::Let { init, .. } => {
+                assert!(matches!(init.kind, ExprKind::Binary { op: BinOp::Mul, .. }));
+            }
+            _ => panic!("expected let"),
+        }
+    }
+
+    #[test]
+    fn parse_mutable_deref_assignment() {
+        let p = parse_src("fn main() { let mut score = 10 let r = &mut score *r = 25 }").unwrap();
+        assert!(matches!(
+            p.functions[0].body.stmts[2],
+            Stmt::DerefAssign { .. }
+        ));
     }
 
     #[test]

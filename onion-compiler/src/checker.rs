@@ -11,12 +11,17 @@ struct VarInfo {
     mutable: bool,
     /// Set when ownership of a String has been transferred.
     moved: bool,
+    id: usize,
+    declared_depth: usize,
+    ref_target: Option<usize>,
+    ref_mutable: bool,
 }
 
 struct Checker {
     scopes: Vec<HashMap<String, VarInfo>>,
     errors: Vec<OnionError>,
     loop_depth: usize,
+    next_id: usize,
 }
 
 /// Type-checks and scope-checks the whole program.
@@ -26,6 +31,7 @@ pub fn check(program: &Program) -> Result<(), Vec<OnionError>> {
         scopes: Vec::new(),
         errors: Vec::new(),
         loop_depth: 0,
+        next_id: 0,
     };
     checker.check_program(program);
 
@@ -84,10 +90,53 @@ impl Checker {
         }
     }
 
-    fn declare(&mut self, name: &str, info: VarInfo) {
+    fn declare(&mut self, name: &str, mut info: VarInfo) {
+        info.id = self.next_id;
+        self.next_id += 1;
+        info.declared_depth = self.scopes.len();
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), info);
         }
+    }
+
+    fn active_mutable_reference(&self, id: usize) -> bool {
+        self.scopes.iter().any(|scope| {
+            scope
+                .values()
+                .any(|binding| binding.ref_target == Some(id) && binding.ref_mutable)
+        })
+    }
+
+    fn active_references(&self, id: usize) -> bool {
+        self.scopes
+            .iter()
+            .any(|scope| scope.values().any(|binding| binding.ref_target == Some(id)))
+    }
+
+    // Reference creation is deliberately limited to a named, live binding.
+    fn reference_origin(&self, expr: &Expr) -> Option<usize> {
+        match &expr.kind {
+            ExprKind::Unary {
+                op: UnOp::Borrow | UnOp::BorrowMut,
+                operand,
+            } => {
+                if let ExprKind::Var(name) = &operand.kind {
+                    self.lookup(name).map(|info| info.id)
+                } else {
+                    None
+                }
+            }
+            ExprKind::Var(name) => self.lookup(name).and_then(|info| info.ref_target),
+            _ => None,
+        }
+    }
+
+    fn binding_by_id(&self, id: usize) -> Option<VarInfo> {
+        self.scopes
+            .iter()
+            .flat_map(|s| s.values())
+            .find(|info| info.id == id)
+            .copied()
     }
 
     fn lookup(&self, name: &str) -> Option<VarInfo> {
@@ -110,10 +159,54 @@ impl Checker {
     // side of `let` or `=` is moved. Numbers and booleans remain Copy.
     // Compound expressions are not ownership transfers yet.
     fn consume_string_binding(&mut self, value: &Expr) {
+        if let ExprKind::Unary {
+            op: UnOp::Deref,
+            operand,
+        } = &value.kind
+        {
+            if let ExprKind::Var(name) = &operand.kind {
+                if self
+                    .lookup(name)
+                    .and_then(|info| info.ty)
+                    .is_some_and(|ty| ty.dereference() == Some(Type::Str))
+                {
+                    self.report(OnionError::new(
+                        "cannot move String out of a reference",
+                        value.span.clone(),
+                    ));
+                    return;
+                }
+            }
+        }
         if let ExprKind::Var(name) = &value.kind {
             if let Some(info) = self.lookup(name) {
                 if info.ty == Some(Type::Str) && !info.moved {
-                    self.update_binding(name, |v| v.moved = true);
+                    if self.active_references(info.id) {
+                        self.report(OnionError::new(
+                            format!("cannot move `{name}` while it is borrowed"),
+                            value.span.clone(),
+                        ));
+                    } else {
+                        self.update_binding(name, |v| v.moved = true);
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_reference_merge(
+        &mut self,
+        first: &[HashMap<String, VarInfo>],
+        second: &[HashMap<String, VarInfo>],
+    ) {
+        for (i, scope) in first.iter().enumerate() {
+            for (name, a) in scope {
+                if let Some(b) = second[i].get(name) {
+                    if a.ref_target != b.ref_target {
+                        self.report(OnionError::without_span(format!(
+                            "reference target differs across control-flow branches for `{name}`"
+                        )));
+                    }
                 }
             }
         }
@@ -129,6 +222,12 @@ impl Checker {
                 let a = first[index].get(name).map(|v| v.moved).unwrap_or(false);
                 let b = second[index].get(name).map(|v| v.moved).unwrap_or(false);
                 info.moved = a || b;
+                // Reject branch-dependent reference origins; they need dataflow analysis.
+                let ref_a = first[index].get(name).and_then(|v| v.ref_target);
+                let ref_b = second[index].get(name).and_then(|v| v.ref_target);
+                if ref_a != ref_b {
+                    info.ref_target = None;
+                }
             }
         }
     }
@@ -191,12 +290,58 @@ impl Checker {
                 if init_ty.is_some() && var_ty == init_ty {
                     self.consume_string_binding(init);
                 }
+                if let Some(existing) = self
+                    .scopes
+                    .last()
+                    .and_then(|scope| scope.get(name))
+                    .copied()
+                {
+                    if self.active_references(existing.id) {
+                        self.report(OnionError::new(
+                            format!("cannot shadow `{name}` while it is borrowed"),
+                            init.span.clone(),
+                        ));
+                    }
+                }
+                if var_ty.is_some_and(Type::is_mut_reference)
+                    && !matches!(
+                        &init.kind,
+                        ExprKind::Unary {
+                            op: UnOp::BorrowMut,
+                            ..
+                        }
+                    )
+                {
+                    self.report(OnionError::new(
+                        "mutable references cannot be copied or rebound yet",
+                        init.span.clone(),
+                    ));
+                }
+                let origin = if var_ty.and_then(Type::dereference).is_some() {
+                    self.reference_origin(init)
+                } else {
+                    None
+                };
+                if let Some(id) = origin {
+                    if let Some(source) = self.binding_by_id(id) {
+                        if source.declared_depth > self.scopes.len() {
+                            self.report(OnionError::new(
+                                "reference outlives its source",
+                                init.span.clone(),
+                            ));
+                        }
+                    }
+                }
                 self.declare(
                     name,
                     VarInfo {
                         ty: var_ty,
                         mutable: *mutable,
                         moved: false,
+                        id: 0,
+                        declared_depth: 0,
+                        ref_target: origin,
+                        ref_mutable: var_ty.is_some_and(Type::is_mut_reference),
                     },
                 );
             }
@@ -214,6 +359,12 @@ impl Checker {
                         name_span.clone(),
                     )),
                     Some(info) => {
+                        if info.ty.is_some_and(Type::is_mut_reference) {
+                            self.report(OnionError::new(
+                                "mutable references cannot be rebound yet",
+                                value.span.clone(),
+                            ));
+                        }
                         if !info.mutable {
                             self.report(
                                 OnionError::new(
@@ -222,6 +373,23 @@ impl Checker {
                                 )
                                 .with_help(format!("declare it with `let mut {name}`")),
                             );
+                        }
+                        if self.active_references(info.id) {
+                            self.report(OnionError::new(
+                                format!("cannot assign to `{name}` while it is borrowed"),
+                                name_span.clone(),
+                            ));
+                        }
+                        let origin = self.reference_origin(value);
+                        if let Some(id) = origin {
+                            if let Some(source) = self.binding_by_id(id) {
+                                if source.declared_depth > info.declared_depth {
+                                    self.report(OnionError::new(
+                                        "reference does not live long enough: it would escape its scope",
+                                        value.span.clone(),
+                                    ));
+                                }
+                            }
                         }
                         if let (Some(expected), Some(found)) = (info.ty, value_ty) {
                             if expected != found {
@@ -235,15 +403,54 @@ impl Checker {
                             if !from_self {
                                 self.consume_string_binding(value);
                             }
-                            self.update_binding(name, |v| v.moved = false);
+                            self.update_binding(name, |v| {
+                                v.moved = false;
+                                v.ref_target = origin;
+                            });
                         }
                     }
                 }
             }
 
+            Stmt::DerefAssign { target, value } => {
+                let target_ty = self.check_expr(target);
+                let value_ty = self.check_expr(value);
+                match target_ty {
+                    Some(ty) if ty.is_mut_reference() => {
+                        if let (Some(inner), Some(found)) = (ty.dereference(), value_ty) {
+                            if inner != found {
+                                self.report(mismatch(inner, found, value.span.clone()));
+                            } else {
+                                self.consume_string_binding(value);
+                            }
+                        }
+                        if let ExprKind::Var(name) = &target.kind {
+                            if self.lookup(name).and_then(|info| info.ref_target).is_none() {
+                                self.report(OnionError::new(
+                                    "mutable reference has no valid target",
+                                    target.span.clone(),
+                                ));
+                            }
+                        }
+                    }
+                    Some(_) => self.report(OnionError::new(
+                        "cannot assign through an immutable reference or non-reference",
+                        target.span.clone(),
+                    )),
+                    None => {}
+                }
+            }
+
             Stmt::Println { args, .. } => {
                 for arg in args {
-                    self.check_expr(arg);
+                    if let Some(ty) = self.check_expr(arg) {
+                        if ty.dereference().is_some() {
+                            self.report(OnionError::new(
+                                "print the referenced value using `*reference`",
+                                arg.span.clone(),
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -268,6 +475,7 @@ impl Checker {
                 }
                 let after_else = self.scopes.clone();
                 self.scopes = before;
+                self.check_reference_merge(&after_then, &after_else);
                 self.merge_moved_states(&after_then, &after_else);
             }
 
@@ -280,6 +488,7 @@ impl Checker {
                 self.check_block(body);
                 let after_twice = self.scopes.clone();
                 self.scopes = before;
+                self.check_reference_merge(&after_once, &after_twice);
                 self.merge_moved_states(&after_once, &after_twice);
                 self.loop_depth -= 1;
             }
@@ -348,20 +557,83 @@ impl Checker {
             },
 
             ExprKind::Unary { op, operand } => {
-                // Parsing references is supported in Phase 16.4, but accepting a
-                // reference before ownership/lifetimes are implemented would be unsafe.
-                if matches!(op, UnOp::Borrow | UnOp::BorrowMut | UnOp::Deref) {
-                    self.check_expr(operand);
-                    self.report(
-                        OnionError::new(
-                            format!("reference operator `{op}` is not implemented yet"),
+                if *op == UnOp::BorrowMut {
+                    let ExprKind::Var(name) = &operand.kind else {
+                        self.report(OnionError::new(
+                            "mutable borrowing requires a named variable",
                             expr.span.clone(),
-                        )
-                        .with_help("Phase 16.4 recognizes reference syntax; borrowing, dereferencing, and lifetime checking are coming next"),
-                    );
-                    return None;
+                        ));
+                        self.check_expr(operand);
+                        return None;
+                    };
+                    let info = self.lookup(name);
+                    let ty = self.check_expr(operand)?;
+                    let info = info?;
+                    if !info.mutable {
+                        self.report(OnionError::new(
+                            format!("cannot mutably borrow immutable variable `{name}`"),
+                            expr.span.clone(),
+                        ));
+                        return None;
+                    }
+                    if self.active_references(info.id) {
+                        self.report(OnionError::new(
+                            format!("cannot mutably borrow `{name}` while it is already borrowed"),
+                            expr.span.clone(),
+                        ));
+                        return None;
+                    }
+                    if ty.dereference().is_some() {
+                        self.report(OnionError::new(
+                            "references to references are not supported yet",
+                            expr.span.clone(),
+                        ));
+                        return None;
+                    }
+                    return ty.mutable_reference_to();
+                }
+                if *op == UnOp::Borrow {
+                    let ExprKind::Var(name) = &operand.kind else {
+                        self.report(OnionError::new(
+                            "borrowing temporary expressions is not supported yet",
+                            expr.span.clone(),
+                        ));
+                        self.check_expr(operand);
+                        return None;
+                    };
+                    let info = self.lookup(name);
+                    let ty = self.check_expr(operand)?;
+                    if info.and_then(|i| i.ref_target).is_some() || ty.dereference().is_some() {
+                        self.report(OnionError::new(
+                            "references to references are not supported yet",
+                            expr.span.clone(),
+                        ));
+                        return None;
+                    }
+                    if let Some(info) = info {
+                        if self.active_mutable_reference(info.id) {
+                            self.report(OnionError::new(
+                                format!("cannot immutably borrow `{name}` while mutably borrowed"),
+                                expr.span.clone(),
+                            ));
+                            return None;
+                        }
+                    }
+                    return ty.reference_to();
                 }
                 let ty = self.check_expr(operand)?;
+                if *op == UnOp::Deref {
+                    return match ty.dereference() {
+                        Some(inner) => Some(inner),
+                        None => {
+                            self.report(OnionError::new(
+                                format!("cannot dereference non-reference type `{ty}`"),
+                                expr.span.clone(),
+                            ));
+                            None
+                        }
+                    };
+                }
                 match (*op, ty) {
                     (UnOp::Neg, Type::I32) | (UnOp::Neg, Type::F64) => Some(ty),
                     (UnOp::Not, Type::Bool) => Some(Type::Bool),
@@ -398,7 +670,9 @@ impl Checker {
                     {
                         Some(l)
                     }
-                    BinOp::Equal | BinOp::NotEqual if l == r => Some(Type::Bool),
+                    BinOp::Equal | BinOp::NotEqual if l == r && l.dereference().is_none() => {
+                        Some(Type::Bool)
+                    }
                     BinOp::Less | BinOp::LessEq | BinOp::Greater | BinOp::GreaterEq
                         if l == r && l.is_numeric() =>
                     {
@@ -520,5 +794,132 @@ mod ownership_tests {
             r#"fn main() { let mut a = "hello" let b = a a = "new" println!("{}", a) }"#
         )
         .is_ok());
+    }
+}
+
+#[cfg(test)]
+mod immutable_borrow_tests {
+    use super::*;
+    use crate::{lexer::lex, parser::parse};
+
+    fn verify(source: &str) -> Result<(), Vec<OnionError>> {
+        let ast = parse(lex(source).unwrap(), source.len()).unwrap();
+        check(&ast)
+    }
+
+    #[test]
+    fn immutable_borrow_is_valid() {
+        assert!(verify(
+            r#"fn main() { let s = "hello" let r = &s println!("{}", *r) println!("{}", s) }"#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn cannot_move_borrowed_string() {
+        let errors =
+            verify(r#"fn main() { let s = "hello" let r = &s let moved = s println!("{}", *r) }"#)
+                .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("while it is borrowed")));
+    }
+
+    #[test]
+    fn cannot_mutate_borrowed_variable() {
+        let errors = verify(r#"fn main() { let mut x = 1 let r = &x x = 2 println!("{}", *r) }"#)
+            .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("while it is borrowed")));
+    }
+
+    #[test]
+    fn cannot_escape_reference_scope() {
+        let errors = verify(r#"fn main() { let a = 1 let mut r = &a if true { let b = 2 r = &b } println!("{}", *r) }"#).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("does not live long enough")));
+    }
+
+    #[test]
+    fn cannot_shadow_borrowed_variable() {
+        let errors = verify(r#"fn main() { let a = 1 let r = &a let a = 2 println!("{}", *r) }"#)
+            .unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("cannot shadow")));
+    }
+
+    #[test]
+    fn mutable_borrow_writes_value() {
+        assert!(
+            verify(r#"fn main() { let mut x = 10 let r = &mut x *r = 25 println!("{}", x) }"#)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn conflicting_mutable_borrows_are_rejected() {
+        let errors =
+            verify("fn main() { let mut x = 1 let r = &mut x let s = &mut x }").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("already borrowed")));
+    }
+
+    #[test]
+    fn immutable_borrow_conflicts_with_mutable() {
+        let errors = verify("fn main() { let mut x = 1 let r = &x let s = &mut x }").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("already borrowed")));
+    }
+
+    #[test]
+    fn mutable_borrow_conflicts_with_immutable() {
+        let errors = verify("fn main() { let mut x = 1 let r = &mut x let s = &x }").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("mutably borrowed")));
+    }
+
+    #[test]
+    fn copying_mutable_reference_is_rejected() {
+        let errors = verify("fn main() { let mut x = 1 let r = &mut x let s = r }").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("cannot be copied")));
+    }
+
+    #[test]
+    fn cannot_write_via_shared_reference() {
+        let errors = verify("fn main() { let mut x = 1 let r = &x *r = 3 }").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("immutable reference")));
+    }
+
+    #[test]
+    fn cannot_mutably_borrow_immutable_variable() {
+        let errors = verify("fn main() { let x = 1 let r = &mut x }").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("immutable variable")));
+    }
+
+    #[test]
+    fn cannot_move_string_out_of_reference() {
+        let errors =
+            verify(r#"fn main() { let mut x = "hello" let r = &mut x let y = *r }"#).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("cannot move String")));
+    }
+
+    #[test]
+    fn cannot_deref_non_reference() {
+        let errors = verify(r#"fn main() { let a = 1 println!("{}", *a) }"#).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("cannot dereference")));
     }
 }

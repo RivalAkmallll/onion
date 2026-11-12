@@ -9,6 +9,14 @@ pub enum Type {
     F64,
     Bool,
     Str,
+    RefI32,
+    RefF64,
+    RefBool,
+    RefStr,
+    MutRefI32,
+    MutRefF64,
+    MutRefBool,
+    MutRefStr,
 }
 
 impl Type {
@@ -18,6 +26,46 @@ impl Type {
             "f64" => Some(Type::F64),
             "bool" => Some(Type::Bool),
             "String" => Some(Type::Str),
+            _ => None,
+        }
+    }
+
+    pub fn reference_to(self) -> Option<Type> {
+        match self {
+            Type::I32 => Some(Type::RefI32),
+            Type::F64 => Some(Type::RefF64),
+            Type::Bool => Some(Type::RefBool),
+            Type::Str => Some(Type::RefStr),
+            _ => None,
+        }
+    }
+
+    pub fn mutable_reference_to(self) -> Option<Type> {
+        match self {
+            Type::I32 => Some(Type::MutRefI32),
+            Type::F64 => Some(Type::MutRefF64),
+            Type::Bool => Some(Type::MutRefBool),
+            Type::Str => Some(Type::MutRefStr),
+            _ => None,
+        }
+    }
+
+    pub fn is_mut_reference(self) -> bool {
+        matches!(
+            self,
+            Type::MutRefI32 | Type::MutRefF64 | Type::MutRefBool | Type::MutRefStr
+        )
+    }
+
+    pub fn dereference(self) -> Option<Type> {
+        match self {
+            Type::RefI32 => Some(Type::I32),
+            Type::RefF64 => Some(Type::F64),
+            Type::RefBool => Some(Type::Bool),
+            Type::RefStr | Type::MutRefStr => Some(Type::Str),
+            Type::MutRefI32 => Some(Type::I32),
+            Type::MutRefF64 => Some(Type::F64),
+            Type::MutRefBool => Some(Type::Bool),
             _ => None,
         }
     }
@@ -34,6 +82,14 @@ impl fmt::Display for Type {
             Type::F64 => "f64",
             Type::Bool => "bool",
             Type::Str => "String",
+            Type::RefI32 => "&i32",
+            Type::RefF64 => "&f64",
+            Type::RefBool => "&bool",
+            Type::RefStr => "&String",
+            Type::MutRefI32 => "&mut i32",
+            Type::MutRefF64 => "&mut f64",
+            Type::MutRefBool => "&mut bool",
+            Type::MutRefStr => "&mut String",
         })
     }
 }
@@ -162,6 +218,11 @@ pub enum Stmt {
     Assign {
         name: String,
         name_span: Span,
+        value: Expr,
+    },
+    /// `*reference = value` (mutable-reference assignment)
+    DerefAssign {
+        target: Expr,
         value: Expr,
     },
     /// `println!("... {} ...", args)`
